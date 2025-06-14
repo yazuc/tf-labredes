@@ -9,11 +9,11 @@ import array
 
 # --- Configurações ---
 # Coloque aqui o nome da sua interface de rede (ex: 'eth0', 'enp0s3')
-NETWORK_INTERFACE = "eth0" 
+NETWORK_INTERFACE = "wlan0" 
 # Limite para detecção de flood (pacotes por segundo)
-FLOOD_THRESHOLD = 10 
+FLOOD_THRESHOLD = 5
 # Duração da janela de tempo para detectar o flood (em segundos)
-TIME_WINDOW = 2 
+TIME_WINDOW = 25
 # IPs de outros hosts na sua sub-rede para simular o DDoS
 # Adicione os IPs IPv6 dos seus outros hosts da rede local aqui
 SIMULATED_DDoS_HOSTS = [

@@ -1,10 +1,7 @@
-from scapy.all import IPv6, ICMPv6EchoRequest, send
-import time
+from scapy.all import *
 
-victim = "fe80::e431:e4ff:fe53:e68a"  # sem %eth0
-iface = "eth0"
+iface = "wlan0"
+dst = "fe80::ec85:dfb9:5d06:a15c%wlan0"
 
-for i in range(100):
-    pkt = IPv6(dst=victim)/ICMPv6EchoRequest()
-    send(pkt, iface=iface, verbose=0)
-    time.sleep(0.01)
+for i in range(5):
+    send(IPv6(dst=dst)/ICMPv6EchoRequest(), iface=iface)
